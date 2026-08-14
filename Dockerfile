@@ -1,11 +1,13 @@
 # The first stage is intentionally distro-less. The final runtime stage is also scratch.
 FROM scratch AS no-distro
 
-FROM golang:1.24-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
-RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/librofm-shelfarr-provider ./cmd/librofm-shelfarr-provider
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags='-s -w' -o /out/librofm-shelfarr-provider ./cmd/librofm-shelfarr-provider
 
 FROM scratch
 COPY --from=build /out/librofm-shelfarr-provider /librofm-shelfarr-provider

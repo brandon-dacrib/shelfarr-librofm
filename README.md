@@ -62,6 +62,12 @@ docker build -t librofm-shelfarr-provider:dev .
 
 The Dockerfile begins with a no-distro `scratch` stage and ends in `scratch`; the Go builder stage is never included in the runtime image.
 
+The image is multi-architecture: `linux/amd64` and `linux/arm64`. The included GitHub Actions workflow publishes a single multi-arch manifest to GHCR on pushes to `main` and version tags. Locally, use Buildx:
+
+```sh
+docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/OWNER/librofm-shelfarr-provider:TAG --push .
+```
+
 ## Limitations and security
 
 - The service is intended for a trusted private network; do not publish it publicly.
