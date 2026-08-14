@@ -29,7 +29,7 @@ Required environment variables:
 | `LIBROFM_USERNAME` | Libro.fm account email |
 | `LIBROFM_PASSWORD` | Libro.fm password |
 | `DOWNLOAD_SIGNING_KEY` | 32+ random characters used only for temporary direct-download URLs |
-| `PUBLIC_BASE_URL` | URL Shelfarr uses to reach this provider, e.g. `http://shelfarr-librofm:8080` |
+| `PUBLIC_BASE_URL` | URL Shelfarr uses to reach this provider, e.g. `http://shelfarr-librofm.doris.svc.cluster.local:8080` |
 
 Optional variables:
 
@@ -52,7 +52,7 @@ In **Admin → Acquisition Providers**, add:
 | Field | Value |
 | --- | --- |
 | Name | `Libro.fm owned library` |
-| Base URL | `http://shelfarr-librofm:8080` |
+| Base URL | `http://shelfarr-librofm.doris.svc.cluster.local:8080` |
 | Bearer Token | Same as `PROVIDER_BEARER_TOKEN`, or blank if disabled |
 | Media Types | Audiobooks |
 | Allow private network | Enabled (it is an in-cluster Service) |

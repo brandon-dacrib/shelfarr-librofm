@@ -33,7 +33,7 @@ spec:
             - name: PROVIDER_BEARER_TOKEN
               valueFrom: {secretKeyRef: {name: shelfarr-librofm, key: provider-bearer-token}}
             - name: PUBLIC_BASE_URL
-              value: http://shelfarr-librofm:8080
+              value: http://shelfarr-librofm.doris.svc.cluster.local:8080
             - name: STATE_DIR
               value: /state
             - name: SYNC_INTERVAL
