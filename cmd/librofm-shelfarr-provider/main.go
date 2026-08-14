@@ -3,6 +3,7 @@
 package main
 
 import (
+	"archive/zip"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -96,7 +97,10 @@ type server struct {
 	syncedAt    time.Time
 	lastAttempt time.Time
 }
-type book struct{ ID, Title, Author, M4BURL string }
+type book struct {
+	ID, Title, Author, M4BURL string
+	ZipURLs                   []string
+}
 type libraryCache struct {
 	SyncedAt    time.Time `json:"synced_at"`
 	LastAttempt time.Time `json:"last_attempt"`
@@ -195,10 +199,14 @@ func (s *server) search(w http.ResponseWriter, r *http.Request) {
 	needle := normalize(strings.Join([]string{request.Query, request.Book.Title, request.Book.Author, request.Book.ISBN}, " "))
 	results := make([]map[string]any, 0)
 	for _, b := range books {
-		if b.M4BURL == "" || !matches(b, needle) {
+		if (b.M4BURL == "" && len(b.ZipURLs) == 0) || !matches(b, needle) {
 			continue
 		}
-		results = append(results, map[string]any{"id": b.ID, "title": b.Title, "author": b.Author, "format": "m4b", "download_type": "direct", "availability": "available"})
+		format := "m4b"
+		if b.M4BURL == "" {
+			format = "mp3"
+		}
+		results = append(results, map[string]any{"id": b.ID, "title": b.Title, "author": b.Author, "format": format, "download_type": "direct", "availability": "available"})
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i]["title"].(string) < results[j]["title"].(string) })
 	jsonResponse(w, http.StatusOK, map[string]any{"results": results})
@@ -225,7 +233,7 @@ func (s *server) acquire(w http.ResponseWriter, r *http.Request) {
 	}
 	found := false
 	for _, b := range books {
-		if b.ID == id && b.M4BURL != "" {
+		if b.ID == id && (b.M4BURL != "" || len(b.ZipURLs) > 0) {
 			found = true
 			break
 		}
@@ -247,15 +255,15 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	books, _ := s.snapshot()
-	var source string
+	var selected *book
 	for _, b := range books {
 		if b.ID == id {
-			source = b.M4BURL
+			selected = &b
 			break
 		}
 	}
-	if source == "" {
-		http.Error(w, "owned M4B result no longer available", http.StatusNotFound)
+	if selected == nil || (selected.M4BURL == "" && len(selected.ZipURLs) == 0) {
+		http.Error(w, "owned audio result no longer available", http.StatusNotFound)
 		return
 	}
 	jar, _ := cookiejar.New(nil)
@@ -264,22 +272,30 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 		providerError(w, err)
 		return
 	}
+	if selected.M4BURL != "" {
+		if streamed := s.streamArtifact(w, client, selected.M4BURL, "audio/mp4"); streamed {
+			return
+		}
+	}
+	if err := s.streamMP3Zip(w, client, selected.ZipURLs); err != nil {
+		providerError(w, err)
+	}
+}
+
+func (s *server) streamArtifact(w http.ResponseWriter, client *http.Client, source, contentType string) bool {
 	u, err := absoluteLibroURL(source)
 	if err != nil {
-		providerError(w, err)
-		return
+		return false
 	}
 	response, err := libroGet(client, u)
 	if err != nil {
-		providerError(w, fmt.Errorf("fetch audiobook: %w", err))
-		return
+		return false
 	}
 	defer response.Body.Close()
 	if response.StatusCode/100 != 2 {
-		providerError(w, fmt.Errorf("Libro.fm download returned %s", response.Status))
-		return
+		return false
 	}
-	w.Header().Set("Content-Type", "audio/mp4")
+	w.Header().Set("Content-Type", contentType)
 	if value := response.Header.Get("Content-Length"); value != "" {
 		w.Header().Set("Content-Length", value)
 	}
@@ -288,6 +304,80 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, response.Body)
+	return true
+}
+func (s *server) streamMP3Zip(w http.ResponseWriter, client *http.Client, sources []string) error {
+	if len(sources) == 0 {
+		return errors.New("Libro.fm has no downloadable M4B or MP3 ZIP")
+	}
+	if len(sources) == 1 {
+		if s.streamArtifact(w, client, sources[0], "application/zip") {
+			return nil
+		}
+		return errors.New("Libro.fm MP3 ZIP download failed")
+	}
+	var files []string
+	defer func() {
+		for _, file := range files {
+			_ = os.Remove(file)
+		}
+	}()
+	for _, source := range sources {
+		u, err := absoluteLibroURL(source)
+		if err != nil {
+			return err
+		}
+		response, err := libroGet(client, u)
+		if err != nil {
+			return err
+		}
+		if response.StatusCode/100 != 2 {
+			response.Body.Close()
+			return fmt.Errorf("Libro.fm MP3 ZIP returned %s", response.Status)
+		}
+		file, err := os.CreateTemp(s.config.stateDir, ".mp3-part-")
+		if err == nil {
+			_, err = io.Copy(file, response.Body)
+			closeErr := file.Close()
+			if err == nil {
+				err = closeErr
+			}
+		}
+		response.Body.Close()
+		if err != nil {
+			return err
+		}
+		files = append(files, file.Name())
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", "attachment; filename=librofm-audiobook.zip")
+	w.WriteHeader(http.StatusOK)
+	writer := zip.NewWriter(w)
+	defer writer.Close()
+	for _, file := range files {
+		reader, err := zip.OpenReader(file)
+		if err != nil {
+			return err
+		}
+		for _, entry := range reader.File {
+			input, err := entry.Open()
+			if err != nil {
+				reader.Close()
+				return err
+			}
+			output, err := writer.Create(entry.Name)
+			if err == nil {
+				_, err = io.Copy(output, input)
+			}
+			input.Close()
+			if err != nil {
+				reader.Close()
+				return err
+			}
+		}
+		reader.Close()
+	}
+	return nil
 }
 
 func (s *server) fetchLibrary() ([]book, error) {
@@ -518,7 +608,9 @@ func parseLibrary(page string) []book {
 		for _, d := range downloads {
 			if strings.Contains(d[1], "file_type=m4b") {
 				b.M4BURL = d[1]
-				break
+			}
+			if strings.Contains(d[1], "file_type=zip") {
+				b.ZipURLs = append(b.ZipURLs, d[1])
 			}
 		}
 		books = append(books, b)
