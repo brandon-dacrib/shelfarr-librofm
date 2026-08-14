@@ -463,7 +463,8 @@ func (s *server) login(client *http.Client) error {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.Header.Set("User-Agent", userAgent)
+	setBrowserHeaders(request)
+	request.Header.Set("Referer", libroBaseURL+"/login")
 	response, err = client.Do(request)
 	if err != nil {
 		return err
@@ -476,8 +477,14 @@ func libroGet(client *http.Client, target string) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("User-Agent", userAgent)
+	setBrowserHeaders(request)
 	return client.Do(request)
+}
+func setBrowserHeaders(request *http.Request) {
+	request.Header.Set("User-Agent", userAgent)
+	request.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	request.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	request.Header.Set("Upgrade-Insecure-Requests", "1")
 }
 
 var csrfRE = regexp.MustCompile(`(?is)<input[^>]+name=["']authenticity_token["'][^>]+value=["']([^"']+)["']`)
