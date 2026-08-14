@@ -38,6 +38,15 @@ func TestEmptyOwnedLibraryIsAValidSearchResult(t *testing.T) {
 		t.Fatalf("got %d unexpected results", len(payload.Results))
 	}
 }
+func TestSearchAcceptsShelfarrMetadataFields(t *testing.T) {
+	s := server{syncedAt: time.Now().UTC(), books: []book{}}
+	req := httptest.NewRequest(http.MethodPost, "/search", bytes.NewBufferString(`{"query":"Dune Frank Herbert","request":{"id":1,"language":"en"},"book":{"id":1,"title":"Dune","author":"Frank Herbert","book_type":"audiobook","year":1965,"language":"en","isbn":"9780441172719","open_library_work_id":"OL1W"}}`))
+	response := httptest.NewRecorder()
+	s.search(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("Shelfarr payload returned %d: %s", response.Code, response.Body.String())
+	}
+}
 func TestSignedURLsCannotBeChanged(t *testing.T) {
 	s := server{config: config{signingKey: "01234567890123456789012345678901"}}
 	if s.sign("123456", 1) == s.sign("123457", 1) || s.sign("123456", 1) == s.sign("123456", 2) {

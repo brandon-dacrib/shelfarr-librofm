@@ -566,7 +566,6 @@ func (s *server) sign(id string, expires int64) string {
 }
 func decodeJSON(r *http.Request, target any) error {
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
 	return decoder.Decode(target)
 }
 func jsonResponse(w http.ResponseWriter, status int, value any) {
