@@ -13,7 +13,7 @@ It does **not** mirror the whole Libro.fm library into Shelfarr or Audiobookshel
 
 ## Why Go
 
-Go is the best fit here: one small statically linked binary, standard-library HTTP/cookie handling, simple deployment, and a genuine `scratch` runtime image with no shell, package manager, or operating-system files. Python would reuse more of the referenced sync scripts, but requires a Python runtime and dependencies; this provider is a request-time HTTP proxy and benefits more from Go's compact, dependency-free deployment.
+Go produces one static binary and a `scratch` runtime image. The Libro.fm session flow is informed by [librofm-downloader](https://github.com/burntcookie90/librofm-downloader) and [librofm-sync](https://github.com/rptetzloff/librofm-sync); this project implements Shelfarr's provider API in Go.
 
 ## What it does
 
@@ -39,6 +39,13 @@ Required environment variables:
 | `LIBROFM_PASSWORD` | Libro.fm password |
 | `DOWNLOAD_SIGNING_KEY` | 32+ random characters used only for temporary direct-download URLs |
 | `PUBLIC_BASE_URL` | URL Shelfarr uses to reach this provider, e.g. `http://shelfarr-librofm.doris.svc.cluster.local:8080` |
+
+Generate each secret separately:
+
+```sh
+openssl rand -hex 32 # DOWNLOAD_SIGNING_KEY
+openssl rand -hex 32 # PROVIDER_BEARER_TOKEN
+```
 
 Optional variables:
 
@@ -91,7 +98,7 @@ DOWNLOAD_SIGNING_KEY=replace-with-32-or-more-random-characters
 PROVIDER_BEARER_TOKEN=replace-with-a-separate-random-token
 ```
 
-Generate the two random values with `openssl rand -hex 32`. Do not commit `.env` or `state/`.
+Do not commit `.env` or `state/`.
 
 Create the external Docker network once (or use the network that already contains Shelfarr), then start the provider:
 
