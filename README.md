@@ -39,7 +39,7 @@ Optional variables:
 | `DOWNLOAD_URL_TTL` | `15m`; maximum `1h` |
 | `LISTEN_ADDR` | `:8080` |
 | `SYNC_INTERVAL` | `24h`; must be between `6h` and `168h` |
-| `MANUAL_SYNC_MIN_INTERVAL` | `6h`; rate limit for `POST /sync`, between `1h` and `SYNC_INTERVAL` |
+| `MANUAL_SYNC_MIN_INTERVAL` | `1h`; rate limit for `POST /sync`, between `1h` and `SYNC_INTERVAL` |
 | `SYNC_ON_START` | `true`; runs one sync after process start |
 | `STATE_DIR` | `/state`; must persist across pod restarts |
 
@@ -59,7 +59,7 @@ In **Admin → Acquisition Providers**, add:
 
 Use **Test** to call `/health`. Shelfarr must be able to resolve and connect to the `PUBLIC_BASE_URL`, too.
 
-`POST /sync` and `GET /sync-status` are bearer-protected administrative endpoints. The deployment keeps the cache on a small PVC and syncs at most once every 24 hours by default; the service never performs an expensive full-library scan in response to a Shelfarr search. `POST /sync` is rate-limited to once per six hours by default, including across pod restarts, so it cannot be used to repeatedly scrape Libro.fm.
+`POST /sync` and `GET /sync-status` are bearer-protected administrative endpoints. The deployment keeps the cache on a small PVC and syncs at most once every 24 hours by default; the service never performs an expensive full-library scan in response to a Shelfarr search. `POST /sync` is rate-limited to once per hour by default, including across pod restarts, so it cannot be used to repeatedly scrape Libro.fm.
 
 ## Build and test
 

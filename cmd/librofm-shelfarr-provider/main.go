@@ -40,7 +40,7 @@ type config struct {
 }
 
 func loadConfig() (config, error) {
-	c := config{username: os.Getenv("LIBROFM_USERNAME"), password: os.Getenv("LIBROFM_PASSWORD"), bearerToken: os.Getenv("PROVIDER_BEARER_TOKEN"), signingKey: os.Getenv("DOWNLOAD_SIGNING_KEY"), publicBaseURL: strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/"), listenAddr: env("LISTEN_ADDR", ":8080"), stateDir: env("STATE_DIR", "/state"), downloadTTL: 15 * time.Minute, syncInterval: 24 * time.Hour, manualSyncMin: 6 * time.Hour, syncOnStart: envBool("SYNC_ON_START", true)}
+	c := config{username: os.Getenv("LIBROFM_USERNAME"), password: os.Getenv("LIBROFM_PASSWORD"), bearerToken: os.Getenv("PROVIDER_BEARER_TOKEN"), signingKey: os.Getenv("DOWNLOAD_SIGNING_KEY"), publicBaseURL: strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/"), listenAddr: env("LISTEN_ADDR", ":8080"), stateDir: env("STATE_DIR", "/state"), downloadTTL: 15 * time.Minute, syncInterval: 24 * time.Hour, manualSyncMin: time.Hour, syncOnStart: envBool("SYNC_ON_START", true)}
 	if c.username == "" || c.password == "" {
 		return c, errors.New("LIBROFM_USERNAME and LIBROFM_PASSWORD are required")
 	}

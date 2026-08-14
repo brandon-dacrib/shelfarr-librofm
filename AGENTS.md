@@ -18,7 +18,7 @@
 
 - Search and acquire must read only the persisted cache; never trigger a Libro.fm library crawl.
 - Full library sync is at most once per `SYNC_INTERVAL` (default `24h`; minimum `6h`).
-- Manual `POST /sync` is protected and rate-limited by `MANUAL_SYNC_MIN_INTERVAL` (default `6h`), persisted through restarts.
+- Manual `POST /sync` is protected and rate-limited by `MANUAL_SYNC_MIN_INTERVAL` (default `1h`), persisted through restarts.
 - A download may open a fresh authenticated session only to retrieve the one cached artifact; it must not enumerate `/user/library`.
 - Do not add concurrency, retries, or automatic rapid polling without an explicit backoff and a documented reason.
 
