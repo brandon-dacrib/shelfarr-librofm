@@ -1,0 +1,25 @@
+package main
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestParseLibraryFindsOwnedM4B(t *testing.T) {
+	page := `<section class="account-list-item"><h3 class="h4">Dune</h3><img class="book-cover" alt="View audiobook of Dune by Frank Herbert"><a href="/user/library/9780441172719/download?file_type=zip">MP3</a><a href="/user/library/9780441172719/download?file_type=m4b">M4B</a></section>`
+	books := parseLibrary(page)
+	if len(books) != 1 || books[0].ID != "9780441172719" || books[0].Author != "Frank Herbert" || !strings.Contains(books[0].M4BURL, "m4b") {
+		t.Fatalf("unexpected parse: %#v", books)
+	}
+}
+func TestSignedURLsCannotBeChanged(t *testing.T) {
+	s := server{config: config{signingKey: "01234567890123456789012345678901"}}
+	if s.sign("123456", 1) == s.sign("123457", 1) || s.sign("123456", 1) == s.sign("123456", 2) {
+		t.Fatal("signature must bind both ID and expiry")
+	}
+}
+func TestAbsoluteLibroURLRejectsOtherHosts(t *testing.T) {
+	if _, err := absoluteLibroURL("https://example.com/file"); err == nil {
+		t.Fatal("expected non-Libro host rejection")
+	}
+}

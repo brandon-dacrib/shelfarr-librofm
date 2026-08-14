@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: librofm-shelfarr-provider
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: librofm-shelfarr-provider
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: librofm-shelfarr-provider
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: provider
+          image: ghcr.io/REPLACE_ME/librofm-shelfarr-provider:REPLACE_ME
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: LIBROFM_USERNAME
+              valueFrom: {secretKeyRef: {name: librofm-shelfarr-provider, key: username}}
+            - name: LIBROFM_PASSWORD
+              valueFrom: {secretKeyRef: {name: librofm-shelfarr-provider, key: password}}
+            - name: DOWNLOAD_SIGNING_KEY
+              valueFrom: {secretKeyRef: {name: librofm-shelfarr-provider, key: download_signing_key}}
+            - name: PROVIDER_BEARER_TOKEN
+              valueFrom: {secretKeyRef: {name: librofm-shelfarr-provider, key: provider_bearer_token}}
+            - name: PUBLIC_BASE_URL
+              value: http://librofm-shelfarr-provider:8080
+          ports: [{name: http, containerPort: 8080}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          livenessProbe: {httpGet: {path: /health, port: http}}
+          readinessProbe: {httpGet: {path: /health, port: http}}
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: librofm-shelfarr-provider
+spec:
+  selector:
+    app.kubernetes.io/name: librofm-shelfarr-provider
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
