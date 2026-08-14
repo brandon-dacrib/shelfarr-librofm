@@ -38,6 +38,8 @@ spec:
               value: /state
             - name: SYNC_INTERVAL
               value: 24h
+            - name: MANUAL_SYNC_MIN_INTERVAL
+              value: 6h
           ports: [{name: http, containerPort: 8080}]
           securityContext:
             allowPrivilegeEscalation: false

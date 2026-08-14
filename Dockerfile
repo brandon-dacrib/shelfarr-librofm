@@ -11,6 +11,10 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags=
 
 FROM scratch
 COPY --from=build /out/librofm-shelfarr-provider /librofm-shelfarr-provider
+# A scratch image has no system trust store. Copy only CA roots needed for
+# Libro.fm HTTPS; no distribution userspace is included.
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/librofm-shelfarr-provider"]

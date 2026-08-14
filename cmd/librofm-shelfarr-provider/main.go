@@ -31,12 +31,12 @@ const userAgent = "ShelfarrLibrofm/0.1 (+https://github.com/brandon-dacrib/shelf
 type config struct {
 	username, password, bearerToken, signingKey, publicBaseURL, listenAddr string
 	stateDir                                                               string
-	downloadTTL, syncInterval                                              time.Duration
+	downloadTTL, syncInterval, manualSyncMin                               time.Duration
 	syncOnStart                                                            bool
 }
 
 func loadConfig() (config, error) {
-	c := config{username: os.Getenv("LIBROFM_USERNAME"), password: os.Getenv("LIBROFM_PASSWORD"), bearerToken: os.Getenv("PROVIDER_BEARER_TOKEN"), signingKey: os.Getenv("DOWNLOAD_SIGNING_KEY"), publicBaseURL: strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/"), listenAddr: env("LISTEN_ADDR", ":8080"), stateDir: env("STATE_DIR", "/state"), downloadTTL: 15 * time.Minute, syncInterval: 24 * time.Hour, syncOnStart: envBool("SYNC_ON_START", true)}
+	c := config{username: os.Getenv("LIBROFM_USERNAME"), password: os.Getenv("LIBROFM_PASSWORD"), bearerToken: os.Getenv("PROVIDER_BEARER_TOKEN"), signingKey: os.Getenv("DOWNLOAD_SIGNING_KEY"), publicBaseURL: strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/"), listenAddr: env("LISTEN_ADDR", ":8080"), stateDir: env("STATE_DIR", "/state"), downloadTTL: 15 * time.Minute, syncInterval: 24 * time.Hour, manualSyncMin: 6 * time.Hour, syncOnStart: envBool("SYNC_ON_START", true)}
 	if c.username == "" || c.password == "" {
 		return c, errors.New("LIBROFM_USERNAME and LIBROFM_PASSWORD are required")
 	}
@@ -60,6 +60,13 @@ func loadConfig() (config, error) {
 		}
 		c.syncInterval = d
 	}
+	if raw := os.Getenv("MANUAL_SYNC_MIN_INTERVAL"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d < time.Hour || d > c.syncInterval {
+			return c, errors.New("MANUAL_SYNC_MIN_INTERVAL must be between 1h and SYNC_INTERVAL")
+		}
+		c.manualSyncMin = d
+	}
 	return c, nil
 }
 func envBool(key string, fallback bool) bool {
@@ -77,22 +84,27 @@ func env(key, fallback string) string {
 }
 
 type server struct {
-	config     config
-	httpClient *http.Client
-	stateMu    sync.RWMutex
-	refreshMu  sync.Mutex
-	books      []book
-	syncedAt   time.Time
+	config      config
+	httpClient  *http.Client
+	stateMu     sync.RWMutex
+	refreshMu   sync.Mutex
+	books       []book
+	syncedAt    time.Time
+	lastAttempt time.Time
 }
 type book struct{ ID, Title, Author, M4BURL string }
 type libraryCache struct {
-	SyncedAt time.Time `json:"synced_at"`
-	Books    []book    `json:"books"`
+	SyncedAt    time.Time `json:"synced_at"`
+	LastAttempt time.Time `json:"last_attempt"`
+	Books       []book    `json:"books"`
 }
 type searchRequest struct {
 	Query string `json:"query"`
 	Book  struct {
-		Title, Author, BookType, ISBN string `json:"title","author","book_type","isbn"`
+		Title    string `json:"title"`
+		Author   string `json:"author"`
+		BookType string `json:"book_type"`
+		ISBN     string `json:"isbn"`
 	} `json:"book"`
 }
 type acquireRequest struct {
@@ -147,6 +159,13 @@ func (s *server) syncStatus(w http.ResponseWriter, _ *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]any{"synced_at": syncedAt, "ready": !syncedAt.IsZero()})
 }
 func (s *server) syncNow(w http.ResponseWriter, r *http.Request) {
+	lastAttempt := s.lastSyncAttempt()
+	if !lastAttempt.IsZero() && time.Since(lastAttempt) < s.config.manualSyncMin {
+		retryAfter := time.Until(lastAttempt.Add(s.config.manualSyncMin)).Round(time.Second)
+		w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+		http.Error(w, "manual sync is rate limited; retry after "+retryAfter.String(), http.StatusTooManyRequests)
+		return
+	}
 	if err := s.refreshLibrary(); err != nil {
 		providerError(w, err)
 		return
@@ -318,10 +337,10 @@ func (s *server) loadCache() error {
 	if err := json.Unmarshal(data, &cache); err != nil {
 		return fmt.Errorf("decode owned-library cache: %w", err)
 	}
-	if cache.SyncedAt.IsZero() {
-		return errors.New("owned-library cache has no sync timestamp")
+	if cache.SyncedAt.IsZero() && cache.LastAttempt.IsZero() {
+		return errors.New("owned-library cache has no sync timestamps")
 	}
-	s.books, s.syncedAt = cache.Books, cache.SyncedAt
+	s.books, s.syncedAt, s.lastAttempt = cache.Books, cache.SyncedAt, cache.LastAttempt
 	log.Printf("loaded owned-library cache: %d titles, synced %s", len(cache.Books), cache.SyncedAt.Format(time.RFC3339))
 	return nil
 }
@@ -330,14 +349,12 @@ func (s *server) snapshot() ([]book, time.Time) {
 	defer s.stateMu.RUnlock()
 	return append([]book(nil), s.books...), s.syncedAt
 }
-func (s *server) refreshLibrary() error {
-	s.refreshMu.Lock()
-	defer s.refreshMu.Unlock()
-	books, err := s.fetchLibrary()
-	if err != nil {
-		return err
-	}
-	cache := libraryCache{SyncedAt: time.Now().UTC(), Books: books}
+func (s *server) lastSyncAttempt() time.Time {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.lastAttempt
+}
+func (s *server) writeCache(cache libraryCache) error {
 	data, err := json.Marshal(cache)
 	if err != nil {
 		return err
@@ -363,14 +380,35 @@ func (s *server) refreshLibrary() error {
 	if err := os.Rename(name, s.cachePath()); err != nil {
 		return fmt.Errorf("publish owned-library cache: %w", err)
 	}
+	return nil
+}
+func (s *server) refreshLibrary() error {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	existing, syncedAt := s.snapshot()
+	attemptedAt := time.Now().UTC()
+	if err := s.writeCache(libraryCache{SyncedAt: syncedAt, LastAttempt: attemptedAt, Books: existing}); err != nil {
+		return err
+	}
 	s.stateMu.Lock()
-	s.books, s.syncedAt = books, cache.SyncedAt
+	s.lastAttempt = attemptedAt
+	s.stateMu.Unlock()
+	books, err := s.fetchLibrary()
+	if err != nil {
+		return err
+	}
+	cache := libraryCache{SyncedAt: time.Now().UTC(), LastAttempt: attemptedAt, Books: books}
+	if err := s.writeCache(cache); err != nil {
+		return err
+	}
+	s.stateMu.Lock()
+	s.books, s.syncedAt, s.lastAttempt = books, cache.SyncedAt, attemptedAt
 	s.stateMu.Unlock()
 	log.Printf("owned-library sync completed: %d titles", len(books))
 	return nil
 }
 func (s *server) syncLoop() {
-	if s.config.syncOnStart {
+	if s.config.syncOnStart && (s.lastSyncAttempt().IsZero() || time.Since(s.lastSyncAttempt()) >= s.config.syncInterval) {
 		if err := s.refreshLibrary(); err != nil {
 			log.Printf("initial owned-library sync failed: %v", err)
 		}
