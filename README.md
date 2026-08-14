@@ -16,6 +16,8 @@ Go is the best fit here: one small statically linked binary, standard-library HT
 
 Search and acquisition read that local cache; they never scrape Libro.fm. A download opens only a fresh authenticated session and streams the previously cached M4B link—without enumerating the library. The signed URL never contains a Libro.fm credential, and the provider does not retain credentials or downloaded media. It deliberately supports M4B only: Libro.fm can split MP3 downloads into multiple ZIPs, whereas Shelfarr requires one concrete artifact per acquisition.
 
+An empty owned library is valid: the initial sync writes an empty cache, `/sync-status` reports ready, and audiobook searches return a successful empty result set. It is not treated as a failed authentication or parser error.
+
 Libro.fm has no public API; it can change its website at any time. Run this only with your own account and titles you are entitled to download.
 
 ## Configuration

@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseLibraryFindsOwnedM4B(t *testing.T) {
@@ -10,6 +15,27 @@ func TestParseLibraryFindsOwnedM4B(t *testing.T) {
 	books := parseLibrary(page)
 	if len(books) != 1 || books[0].ID != "9780441172719" || books[0].Author != "Frank Herbert" || !strings.Contains(books[0].M4BURL, "m4b") {
 		t.Fatalf("unexpected parse: %#v", books)
+	}
+}
+func TestEmptyOwnedLibraryIsAValidSearchResult(t *testing.T) {
+	if books := parseLibrary(`<main><h1>Your library</h1></main>`); len(books) != 0 {
+		t.Fatalf("empty library parsed as %#v", books)
+	}
+	s := server{syncedAt: time.Now().UTC(), books: []book{}}
+	req := httptest.NewRequest(http.MethodPost, "/search", bytes.NewBufferString(`{"query":"Dune","book":{"book_type":"audiobook"}}`))
+	response := httptest.NewRecorder()
+	s.search(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("empty owned library returned %d: %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Results []json.RawMessage `json:"results"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Results) != 0 {
+		t.Fatalf("got %d unexpected results", len(payload.Results))
 	}
 }
 func TestSignedURLsCannotBeChanged(t *testing.T) {
