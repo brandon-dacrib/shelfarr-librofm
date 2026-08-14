@@ -269,7 +269,7 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 		providerError(w, err)
 		return
 	}
-	response, err := client.Get(u)
+	response, err := libroGet(client, u)
 	if err != nil {
 		providerError(w, fmt.Errorf("fetch audiobook: %w", err))
 		return
@@ -303,7 +303,7 @@ func (s *server) fetchLibrary() ([]book, error) {
 		seen[b.ID] = true
 	}
 	for pageNumber := 2; ; pageNumber++ {
-		next, err := client.Get(fmt.Sprintf("%s/user/library?page=%d", libroBaseURL, pageNumber))
+		next, err := libroGet(client, fmt.Sprintf("%s/user/library?page=%d", libroBaseURL, pageNumber))
 		if err != nil {
 			return nil, err
 		}
@@ -429,7 +429,7 @@ func (s *server) loginAndLibrary(client *http.Client) (string, error) {
 	if err := s.login(client); err != nil {
 		return "", err
 	}
-	response, err := client.Get(libroBaseURL + "/user/library")
+	response, err := libroGet(client, libroBaseURL+"/user/library")
 	if err != nil {
 		return "", err
 	}
@@ -444,12 +444,7 @@ func (s *server) loginAndLibrary(client *http.Client) (string, error) {
 	return string(data), nil
 }
 func (s *server) login(client *http.Client) error {
-	request, err := http.NewRequest(http.MethodGet, libroBaseURL+"/login", nil)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("User-Agent", userAgent)
-	response, err := client.Do(request)
+	response, err := libroGet(client, libroBaseURL+"/login")
 	if err != nil {
 		return err
 	}
@@ -463,12 +458,26 @@ func (s *server) login(client *http.Client) error {
 		return errors.New("Libro.fm login page did not include CSRF token")
 	}
 	form := url.Values{"authenticity_token": {token}, "email": {s.config.username}, "password": {s.config.password}, "commit": {"Log in"}}
-	response, err = client.PostForm(libroBaseURL+"/user/attempt-login", form)
+	request, err := http.NewRequest(http.MethodPost, libroBaseURL+"/user/attempt-login", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("User-Agent", userAgent)
+	response, err = client.Do(request)
 	if err != nil {
 		return err
 	}
 	response.Body.Close()
 	return nil
+}
+func libroGet(client *http.Client, target string) (*http.Response, error) {
+	request, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("User-Agent", userAgent)
+	return client.Do(request)
 }
 
 var csrfRE = regexp.MustCompile(`(?is)<input[^>]+name=["']authenticity_token["'][^>]+value=["']([^"']+)["']`)
