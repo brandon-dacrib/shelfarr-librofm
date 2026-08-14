@@ -7,7 +7,7 @@ This is a private, self-hosted [Shelfarr Custom Acquisition Provider](https://gi
 Libro.fm sync and acquisition are separate concerns:
 
 - **Sync** periodically inventories the Libro.fm titles you already own and caches only their metadata and authorized download references.
-- **Acquisition** exposes those cached owned titles as another Shelfarr source (`dawn-librofm`). When a user searches a Shelfarr audiobook request, a matching owned title can be selected and Shelfarr performs its normal download, import, and Audiobookshelf scan.
+- **Acquisition** exposes those cached owned titles as another Shelfarr source. When a user searches a Shelfarr audiobook request, a matching owned title can be selected and Shelfarr performs its normal download, import, and Audiobookshelf scan.
 
 It does **not** mirror the whole Libro.fm library into Shelfarr or Audiobookshelf, purchase books, or automatically fulfill existing requests merely because a title appears during sync. A request must be searched and selected (including Shelfarr auto-selection, if configured) before Shelfarr acquires and imports it. A future Shelfarr-owned reconciliation feature could safely match pending requests after a sync and enqueue only high-confidence matches.
 
