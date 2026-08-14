@@ -54,6 +54,59 @@ Optional variables:
 
 Never put these values in Git. With the 1Password Operator, create an item whose generated Kubernetes Secret has `username`, `password`, `download-signing-key`, and (if used) `provider-bearer-token` fields. The example manifests in [`deploy/kubernetes`](deploy/kubernetes) consume exactly those fields.
 
+## Run with Docker
+
+Create a directory, then save this as `compose.yaml`:
+
+```yaml
+services:
+  shelfarr-librofm:
+    image: ghcr.io/brandon-dacrib/shelfarr-librofm:v0.1.7
+    container_name: shelfarr-librofm
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      LISTEN_ADDR: :8080
+      # Use this exact URL in Shelfarr when both containers share this network.
+      PUBLIC_BASE_URL: http://shelfarr-librofm:8080
+      STATE_DIR: /state
+      SYNC_INTERVAL: 24h
+      MANUAL_SYNC_MIN_INTERVAL: 1h
+    volumes:
+      # Required: preserves the cache and sync rate-limit state across restarts.
+      - ./state:/state
+    networks: [media]
+
+networks:
+  media:
+    external: true
+```
+
+Create `.env` beside it, restrict its permissions, and replace the placeholders:
+
+```dotenv
+LIBROFM_USERNAME=reader@example.com
+LIBROFM_PASSWORD=replace-with-your-librofm-password
+DOWNLOAD_SIGNING_KEY=replace-with-32-or-more-random-characters
+PROVIDER_BEARER_TOKEN=replace-with-a-separate-random-token
+```
+
+Generate the two random values with `openssl rand -hex 32`. Do not commit `.env` or `state/`.
+
+Create the external Docker network once (or use the network that already contains Shelfarr), then start the provider:
+
+```sh
+docker network create media
+chmod 600 .env
+docker compose pull
+docker compose up -d
+docker compose logs -f shelfarr-librofm
+```
+
+The first start performs one Libro.fm owned-library sync. A successful empty library is valid. Confirm `GET /health` returns `200`; use `GET /sync-status` with `Authorization: Bearer $PROVIDER_BEARER_TOKEN` to see whether the initial sync is ready. The provider uses a `scratch` image, so it intentionally has no shell for `docker exec` troubleshooting; use logs and HTTP endpoints instead.
+
+If Shelfarr is not on the same Docker network, set `PUBLIC_BASE_URL` to a URL that Shelfarr can resolve and reach. Do not expose this service publicly.
+
 ## Shelfarr setup
 
 In **Admin → Acquisition Providers**, add:
