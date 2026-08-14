@@ -13,7 +13,7 @@ It does **not** mirror the whole Libro.fm library into Shelfarr or Audiobookshel
 
 ## Why Go
 
-Go produces one static binary and a `scratch` runtime image. The Libro.fm session flow is informed by [librofm-downloader](https://github.com/burntcookie90/librofm-downloader) and [librofm-sync](https://github.com/rptetzloff/librofm-sync); this project implements Shelfarr's provider API in Go.
+Go produces one static binary and a `scratch` runtime image. The Libro.fm session flow is informed by [librofm-downloader](https://github.com/burntcookie90/librofm-downloader) and [librofm-sync](https://github.com/rptetzloff/librofm-sync); this project implements [Shelfarr](https://github.com/Pedro-Revez-Silva/shelfarr)'s provider API in Go.
 
 ## What it does
 
