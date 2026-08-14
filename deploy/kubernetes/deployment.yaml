@@ -21,7 +21,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: shelfarr-librofm
-          image: ghcr.io/brandon-dacrib/shelfarr-librofm:0.1.0
+          image: ghcr.io/brandon-dacrib/shelfarr-librofm:v0.1.1
           imagePullPolicy: IfNotPresent
           env:
             - name: LIBROFM_USERNAME

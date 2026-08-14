@@ -26,7 +26,11 @@ import (
 )
 
 const libroBaseURL = "https://libro.fm"
-const userAgent = "ShelfarrLibrofm/0.1 (+https://github.com/brandon-dacrib/shelfarr-librofm)"
+
+// Libro.fm rejects non-browser user agents before returning the Rails login
+// form. This is the same normal browser identification used by the reference
+// sync tools; credentials are still sent only to libro.fm over HTTPS.
+const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 
 type config struct {
 	username, password, bearerToken, signingKey, publicBaseURL, listenAddr string
