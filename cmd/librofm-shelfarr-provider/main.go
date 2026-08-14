@@ -16,23 +16,27 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const libroBaseURL = "https://libro.fm"
-const userAgent = "LibrofmShelfarrProvider/0.1 (+https://github.com/brandon/librofm-shelfarr-provider)"
+const userAgent = "ShelfarrLibrofm/0.1 (+https://github.com/brandon-dacrib/shelfarr-librofm)"
 
 type config struct {
 	username, password, bearerToken, signingKey, publicBaseURL, listenAddr string
-	downloadTTL                                                            time.Duration
+	stateDir                                                               string
+	downloadTTL, syncInterval                                              time.Duration
+	syncOnStart                                                            bool
 }
 
 func loadConfig() (config, error) {
-	c := config{username: os.Getenv("LIBROFM_USERNAME"), password: os.Getenv("LIBROFM_PASSWORD"), bearerToken: os.Getenv("PROVIDER_BEARER_TOKEN"), signingKey: os.Getenv("DOWNLOAD_SIGNING_KEY"), publicBaseURL: strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/"), listenAddr: env("LISTEN_ADDR", ":8080"), downloadTTL: 15 * time.Minute}
+	c := config{username: os.Getenv("LIBROFM_USERNAME"), password: os.Getenv("LIBROFM_PASSWORD"), bearerToken: os.Getenv("PROVIDER_BEARER_TOKEN"), signingKey: os.Getenv("DOWNLOAD_SIGNING_KEY"), publicBaseURL: strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/"), listenAddr: env("LISTEN_ADDR", ":8080"), stateDir: env("STATE_DIR", "/state"), downloadTTL: 15 * time.Minute, syncInterval: 24 * time.Hour, syncOnStart: envBool("SYNC_ON_START", true)}
 	if c.username == "" || c.password == "" {
 		return c, errors.New("LIBROFM_USERNAME and LIBROFM_PASSWORD are required")
 	}
@@ -49,7 +53,21 @@ func loadConfig() (config, error) {
 		}
 		c.downloadTTL = d
 	}
+	if raw := os.Getenv("SYNC_INTERVAL"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d < 6*time.Hour || d > 7*24*time.Hour {
+			return c, errors.New("SYNC_INTERVAL must be between 6h and 168h")
+		}
+		c.syncInterval = d
+	}
 	return c, nil
+}
+func envBool(key string, fallback bool) bool {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback
+	}
+	return value == "1" || strings.EqualFold(value, "true") || strings.EqualFold(value, "yes")
 }
 func env(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
@@ -61,8 +79,16 @@ func env(key, fallback string) string {
 type server struct {
 	config     config
 	httpClient *http.Client
+	stateMu    sync.RWMutex
+	refreshMu  sync.Mutex
+	books      []book
+	syncedAt   time.Time
 }
 type book struct{ ID, Title, Author, M4BURL string }
+type libraryCache struct {
+	SyncedAt time.Time `json:"synced_at"`
+	Books    []book    `json:"books"`
+}
 type searchRequest struct {
 	Query string `json:"query"`
 	Book  struct {
@@ -82,11 +108,17 @@ func main() {
 		log.Fatal(err)
 	}
 	s := &server{config: c, httpClient: &http.Client{Timeout: 45 * time.Second}}
+	if err := s.loadCache(); err != nil {
+		log.Fatal(err)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("POST /search", s.auth(s.search))
 	mux.HandleFunc("POST /acquire", s.auth(s.acquire))
+	mux.HandleFunc("POST /sync", s.auth(s.syncNow))
+	mux.HandleFunc("GET /sync-status", s.auth(s.syncStatus))
 	mux.HandleFunc("GET /download/", s.download)
+	go s.syncLoop()
 	log.Printf("starting Libro.fm Shelfarr provider on %s", c.listenAddr)
 	log.Fatal(http.ListenAndServe(c.listenAddr, securityHeaders(mux)))
 }
@@ -110,6 +142,17 @@ func (s *server) auth(next http.HandlerFunc) http.HandlerFunc {
 func (s *server) health(w http.ResponseWriter, _ *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
+func (s *server) syncStatus(w http.ResponseWriter, _ *http.Request) {
+	_, syncedAt := s.snapshot()
+	jsonResponse(w, http.StatusOK, map[string]any{"synced_at": syncedAt, "ready": !syncedAt.IsZero()})
+}
+func (s *server) syncNow(w http.ResponseWriter, r *http.Request) {
+	if err := s.refreshLibrary(); err != nil {
+		providerError(w, err)
+		return
+	}
+	s.syncStatus(w, r)
+}
 
 func (s *server) search(w http.ResponseWriter, r *http.Request) {
 	var request searchRequest
@@ -121,9 +164,9 @@ func (s *server) search(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]any{"results": []any{}})
 		return
 	}
-	books, err := s.library()
-	if err != nil {
-		providerError(w, err)
+	books, syncedAt := s.snapshot()
+	if syncedAt.IsZero() {
+		http.Error(w, "owned-library cache is not ready; retry after the initial sync", http.StatusServiceUnavailable)
 		return
 	}
 	needle := normalize(strings.Join([]string{request.Query, request.Book.Title, request.Book.Author, request.Book.ISBN}, " "))
@@ -152,9 +195,9 @@ func (s *server) acquire(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing or invalid provider_result_id", http.StatusBadRequest)
 		return
 	}
-	books, err := s.library()
-	if err != nil {
-		providerError(w, err)
+	books, syncedAt := s.snapshot()
+	if syncedAt.IsZero() {
+		http.Error(w, "owned-library cache is not ready; retry after the initial sync", http.StatusServiceUnavailable)
 		return
 	}
 	found := false
@@ -180,11 +223,7 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid or expired download URL", http.StatusForbidden)
 		return
 	}
-	books, err := s.library()
-	if err != nil {
-		providerError(w, err)
-		return
-	}
+	books, _ := s.snapshot()
 	var source string
 	for _, b := range books {
 		if b.ID == id {
@@ -228,7 +267,7 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, response.Body)
 }
 
-func (s *server) library() ([]book, error) {
+func (s *server) fetchLibrary() ([]book, error) {
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, Timeout: 45 * time.Second}
 	page, err := s.loginAndLibrary(client)
@@ -264,6 +303,85 @@ func (s *server) library() ([]book, error) {
 		}
 	}
 	return books, nil
+}
+
+func (s *server) cachePath() string { return filepath.Join(s.config.stateDir, "library.json") }
+func (s *server) loadCache() error {
+	data, err := os.ReadFile(s.cachePath())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read owned-library cache: %w", err)
+	}
+	var cache libraryCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return fmt.Errorf("decode owned-library cache: %w", err)
+	}
+	if cache.SyncedAt.IsZero() {
+		return errors.New("owned-library cache has no sync timestamp")
+	}
+	s.books, s.syncedAt = cache.Books, cache.SyncedAt
+	log.Printf("loaded owned-library cache: %d titles, synced %s", len(cache.Books), cache.SyncedAt.Format(time.RFC3339))
+	return nil
+}
+func (s *server) snapshot() ([]book, time.Time) {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return append([]book(nil), s.books...), s.syncedAt
+}
+func (s *server) refreshLibrary() error {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	books, err := s.fetchLibrary()
+	if err != nil {
+		return err
+	}
+	cache := libraryCache{SyncedAt: time.Now().UTC(), Books: books}
+	data, err := json.Marshal(cache)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(s.config.stateDir, 0700); err != nil {
+		return fmt.Errorf("create state directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(s.config.stateDir, ".library.json-")
+	if err != nil {
+		return err
+	}
+	name := temporary.Name()
+	defer os.Remove(name)
+	if err := temporary.Chmod(0600); err == nil {
+		_, err = temporary.Write(data)
+	}
+	if closeErr := temporary.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("write owned-library cache: %w", err)
+	}
+	if err := os.Rename(name, s.cachePath()); err != nil {
+		return fmt.Errorf("publish owned-library cache: %w", err)
+	}
+	s.stateMu.Lock()
+	s.books, s.syncedAt = books, cache.SyncedAt
+	s.stateMu.Unlock()
+	log.Printf("owned-library sync completed: %d titles", len(books))
+	return nil
+}
+func (s *server) syncLoop() {
+	if s.config.syncOnStart {
+		if err := s.refreshLibrary(); err != nil {
+			log.Printf("initial owned-library sync failed: %v", err)
+		}
+	}
+	ticker := time.NewTicker(s.config.syncInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		if err := s.refreshLibrary(); err != nil {
+			log.Printf("scheduled owned-library sync failed: %v", err)
+		}
+	}
 }
 func (s *server) loginAndLibrary(client *http.Client) (string, error) {
 	if err := s.login(client); err != nil {

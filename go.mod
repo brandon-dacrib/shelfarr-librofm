@@ -1,3 +1,3 @@
-module github.com/brandon/librofm-shelfarr-provider
+module github.com/brandon-dacrib/shelfarr-librofm
 
 go 1.24

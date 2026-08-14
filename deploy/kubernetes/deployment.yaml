@@ -1,37 +1,43 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: librofm-shelfarr-provider
+  name: shelfarr-librofm
+  namespace: doris
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: librofm-shelfarr-provider
+      app.kubernetes.io/name: shelfarr-librofm
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: librofm-shelfarr-provider
+        app.kubernetes.io/name: shelfarr-librofm
     spec:
+      enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
         seccompProfile: {type: RuntimeDefault}
       containers:
-        - name: provider
-          image: ghcr.io/REPLACE_ME/librofm-shelfarr-provider:REPLACE_ME
+        - name: shelfarr-librofm
+          image: ghcr.io/brandon-dacrib/shelfarr-librofm:0.1.0
           imagePullPolicy: IfNotPresent
           env:
             - name: LIBROFM_USERNAME
-              valueFrom: {secretKeyRef: {name: librofm-shelfarr-provider, key: username}}
+              valueFrom: {secretKeyRef: {name: shelfarr-librofm, key: username}}
             - name: LIBROFM_PASSWORD
-              valueFrom: {secretKeyRef: {name: librofm-shelfarr-provider, key: password}}
+              valueFrom: {secretKeyRef: {name: shelfarr-librofm, key: password}}
             - name: DOWNLOAD_SIGNING_KEY
-              valueFrom: {secretKeyRef: {name: librofm-shelfarr-provider, key: download_signing_key}}
+              valueFrom: {secretKeyRef: {name: shelfarr-librofm, key: download-signing-key}}
             - name: PROVIDER_BEARER_TOKEN
-              valueFrom: {secretKeyRef: {name: librofm-shelfarr-provider, key: provider_bearer_token}}
+              valueFrom: {secretKeyRef: {name: shelfarr-librofm, key: provider-bearer-token}}
             - name: PUBLIC_BASE_URL
-              value: http://librofm-shelfarr-provider:8080
+              value: http://shelfarr-librofm:8080
+            - name: STATE_DIR
+              value: /state
+            - name: SYNC_INTERVAL
+              value: 24h
           ports: [{name: http, containerPort: 8080}]
           securityContext:
             allowPrivilegeEscalation: false
@@ -42,15 +48,36 @@ spec:
           resources:
             requests: {cpu: 25m, memory: 32Mi}
             limits: {memory: 128Mi}
+          volumeMounts:
+            - name: state
+              mountPath: /state
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: shelfarr-librofm-state
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: librofm-shelfarr-provider
+  name: shelfarr-librofm
+  namespace: doris
 spec:
   selector:
-    app.kubernetes.io/name: librofm-shelfarr-provider
+    app.kubernetes.io/name: shelfarr-librofm
   ports:
     - name: http
       port: 8080
       targetPort: http
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shelfarr-librofm-state
+  namespace: doris
+  labels:
+    app.kubernetes.io/name: shelfarr-librofm
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 64Mi
